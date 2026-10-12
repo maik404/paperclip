@@ -464,6 +464,92 @@ describe("agent routes adapter validation", () => {
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
   });
 
+  it("Gateway adapter: migrates codex_local -> openclaw_gateway and detaches the inherited aiConnection", async () => {
+    // Migratie naar een connection-loze adapter (openclaw_gateway) mag niet met 422
+    // stranden op een geërfde OpenAI aiConnection. De route koppelt die binding los en
+    // stuurt de adapterwissel door; agent-id/instructies/bevoegdheden blijven ongewijzigd.
+    const agentId = "11111111-1111-4111-8111-111111111111";
+    mockAgentService.getById.mockResolvedValue({
+      id: agentId,
+      companyId: "company-1",
+      name: "Network Engineer",
+      urlKey: "network-engineer",
+      role: "engineer",
+      title: null,
+      icon: null,
+      status: "idle",
+      reportsTo: null,
+      capabilities: null,
+      adapterType: "codex_local",
+      adapterConfig: { cwd: "E:/Paperclip/workspaces/sample-network-engineer", extraArgs: ["--skip-git-repo-check"] },
+      runtimeConfig: {
+        heartbeat: { enabled: false, wakeOnDemand: true, maxConcurrentRuns: 1 },
+        aiConnection: { provider: "openai", method: "subscription", mode: "responsible_user" },
+      },
+      budgetMonthlyCents: 0,
+      spentMonthlyCents: 0,
+      pauseReason: null,
+      pausedAt: null,
+      permissions: { canCreateAgents: false },
+      lastHeartbeatAt: null,
+      metadata: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    const app = await createApp();
+    const res = await requestApp(app, (baseUrl) =>
+      request(baseUrl)
+        .patch(`/api/agents/${agentId}`)
+        .send({ adapterType: "openclaw_gateway", adapterConfig: { url: "ws://127.0.0.1:18830/" } }),
+    );
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const patch = mockAgentService.update.mock.calls.at(-1)?.[1] as Record<string, unknown>;
+    expect(patch.adapterType).toBe("openclaw_gateway");
+    const runtimeConfig = (patch.runtimeConfig ?? {}) as Record<string, unknown>;
+    expect(runtimeConfig.aiConnection).toBeUndefined();
+    // Overige runtimeConfig-velden blijven behouden.
+    expect((runtimeConfig.heartbeat as Record<string, unknown> | undefined)?.maxConcurrentRuns).toBe(1);
+  });
+
+  it("Gateway adapter: keeps enforcing the harness compatibility for connection-using adapters", async () => {
+    // Bestaande bescherming mag niet verzwakken: een codex_local agent met een
+    // geërfde OpenAI-binding die naar claude_local migreert blijft fail-closed.
+    const agentId = "11111111-1111-4111-8111-111111111111";
+    mockAgentService.getById.mockResolvedValue({
+      id: agentId,
+      companyId: "company-1",
+      name: "Codex",
+      urlKey: "codex",
+      role: "engineer",
+      title: null,
+      icon: null,
+      status: "idle",
+      reportsTo: null,
+      capabilities: null,
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: { aiConnection: { provider: "openai", method: "subscription", mode: "responsible_user" } },
+      budgetMonthlyCents: 0,
+      spentMonthlyCents: 0,
+      pauseReason: null,
+      pausedAt: null,
+      permissions: { canCreateAgents: false },
+      lastHeartbeatAt: null,
+      metadata: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    const app = await createApp();
+    const res = await requestApp(app, (baseUrl) =>
+      request(baseUrl)
+        .patch(`/api/agents/${agentId}`)
+        .send({ adapterType: "claude_local" }),
+    );
+    expect(res.status, JSON.stringify(res.body)).toBe(422);
+    expect(String(res.body.error ?? res.body.message ?? "")).toContain("compatible with the new harness");
+  });
+
   it("isolates CODEX_HOME when updating a codex_local agent to set its own OPENAI_API_KEY", async () => {
     const agentId = "11111111-1111-4111-8111-111111111111";
     const app = await createApp();
@@ -484,7 +570,7 @@ describe("agent routes adapter validation", () => {
     const adapterConfig = patch.adapterConfig as Record<string, unknown>;
     const env = adapterConfig.env as Record<string, unknown>;
     expect(env.OPENAI_API_KEY).toBe("sk-test-key");
-    expect(String(env.CODEX_HOME)).toContain(`/companies/company-1/agents/${agentId}/codex-home`);
+    expect(String(env.CODEX_HOME).replaceAll("\\", "/")).toContain(`/companies/company-1/agents/${agentId}/codex-home`);
   });
 
   it("allows codex_local agents to share the host Codex home", async () => {
@@ -533,7 +619,7 @@ describe("agent routes adapter validation", () => {
     const adapterConfig = createInput.adapterConfig as Record<string, unknown>;
     const env = adapterConfig.env as Record<string, unknown>;
     expect(env.OPENAI_API_KEY).toBe("sk-test-key");
-    expect(String(env.CODEX_HOME)).toContain(`/companies/company-1/agents/${agentId}/codex-home`);
+    expect(String(env.CODEX_HOME).replaceAll("\\", "/")).toContain(`/companies/company-1/agents/${agentId}/codex-home`);
   });
 
   it("restores a saved agent's redacted CODEX_HOME before testing its adapter", async () => {

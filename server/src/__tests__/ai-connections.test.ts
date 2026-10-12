@@ -15,7 +15,7 @@ import * as executionTarget from "@paperclipai/adapter-utils/execution-target";
 import { prepareManagedAiRuntime, assertManagedAiProjectAuth } from "../services/ai-connection-runtime.js";
 import { toolAccessService } from "../services/tool-access.js";
 import { secretService } from "../services/secrets.js";
-import { aiConnectionBindingSchema, connectionPurposeTransportSchema, isAiConnectionCompatible } from "@paperclipai/shared";
+import { aiConnectionBindingSchema, connectionPurposeTransportSchema, isAiConnectionCompatible, adapterUsesAiConnection } from "@paperclipai/shared";
 import express from "express";
 import request from "supertest";
 import { aiConnectionRoutes, canInstallSharedAiConnectionForNewAgent, responsibleUserForAiRequest } from "../routes/ai-connections.js";
@@ -463,6 +463,16 @@ describe("managed AI connections", () => {
     expect(isAiConnectionCompatible(binding, "paperclip_runner", "same-model", "acpx", "claude")).toBe(true);
     expect(isAiConnectionCompatible(binding, "paperclip_runner", "same-model", "acpx", "codex")).toBe(false);
     expect(isAiConnectionCompatible({ provider: "openrouter", method: "api_key" }, "opencode_local", "anthropic/model")).toBe(false);
+  });
+  it("treats openclaw_gateway as a connection-less adapter", () => {
+    // Migratie codex_local -> openclaw_gateway: de gateway authenticeert zelf; er is
+    // geen Paperclip AI-connection nodig of geërfd.
+    expect(adapterUsesAiConnection("openclaw_gateway")).toBe(false);
+    expect(adapterUsesAiConnection("codex_local")).toBe(true);
+    expect(adapterUsesAiConnection("claude_local")).toBe(true);
+    // Bestaande harnessen blijven onveranderd.
+    expect(isAiConnectionCompatible(binding, "codex_local")).toBe(false);
+    expect(isAiConnectionCompatible({ provider: "openai", method: "subscription", mode: "responsible_user" }, "codex_local")).toBe(true);
   });
   it("does not let a forged delegation bypass human access or accept an expired subscription attempt", async () => {
     const selected = await service.select({ ...input, userId: "alice" });

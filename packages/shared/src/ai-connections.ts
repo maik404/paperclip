@@ -108,6 +108,19 @@ export const AI_CONNECTION_CAPABILITIES: Record<
     },
   },
 };
+/**
+ * Adapters that own their own model routing and never consume a Paperclip AI
+ * connection. A run on such an adapter authenticates at the gateway/provider
+ * side (openclaw_gateway delegates the model call to the OpenClaw gateway), so
+ * no per-agent AI connection is required or inherited. Kept deliberately narrow:
+ * only openclaw_gateway, matching the approved migration scope.
+ */
+export const ADAPTERS_WITHOUT_AI_CONNECTION = ["openclaw_gateway"] as const;
+
+export function adapterUsesAiConnection(adapterType: string): boolean {
+  return !(ADAPTERS_WITHOUT_AI_CONNECTION as readonly string[]).includes(adapterType);
+}
+
 export function isAiConnectionCompatible(
   requirement: AiConnectionMetadata | AiConnectionBinding,
   adapterType: string,
